@@ -18,15 +18,7 @@ exception of Home and Capture. Descriptor modification allows us to unlock
 these buttons for our use.
 */
 
-/** \file
- *
- *  Main source file for the posts printer demo. This file contains the main tasks of
- *  the demo and is responsible for the initial application hardware configuration.
- */
-
 #include "Joystick.h"
-
-extern const uint8_t image_data[0x12c1] PROGMEM;
 
 // Main entry point.
 int main(void) {
@@ -139,6 +131,14 @@ void HID_Task(void) {
 }
 
 typedef enum {
+	SYNC_POSITION,
+	BREATHE,
+	PROCESS,
+	DONE
+} State_t;
+State_t state = SYNC_POSITION;
+
+typedef enum {
 	CONNECT_CONTROLLER,
 	SYNC_CONTROLLER,
 	GO_TO_ALTERNA,
@@ -148,30 +148,31 @@ typedef enum {
 	JUMP_TO_STAGE,
 	ENTER_STAGE,
 	CLEAR_STAGE,
-	GET_ITEM,
+	LUNCH_DRONE,
 	RESET_SENSITIVITY,
 	RESET_GYRO_SETTING,
 	BACK_TO_SPLATSVILLE,
-	DONE
-} State_t;
-State_t state = CONNECT_CONTROLLER;
+} Step_t;
+Step_t step = CONNECT_CONTROLLER;
+
+command tmp;
 
 #define ECHOES 2
 int echoes = 0;
 USB_JoystickReport_Input_t last_report;
 
+int bufindex = 0;
+
+int duration_count = 0;
 int report_count = 0;
-int clear_count = 0;
-int sensitivity_count = 0;
-// --------------------------------	   設定		--------------------------------
-int gyro_setting = 1;
-// ジャイロ操作をONにしている場合は1、OFFの場合は0を入力
-int sensitivity = 10;
-// 設定感度を2倍した値を記述
-// 私の場合は操作感度を最大値の5にしているので、2倍して10を記述している
-// --------------------------------	設定ここまで	--------------------------------
-int timer = 0;
+
+int cnt = 0;
 int flag = 0;
+int mode = 0;
+int clear_count = 0; // ステージ1-8をクリアした回数をカウント
+int sensitivity_set = -5 * 2; // プログラムで用いる操作感度を2倍
+int sensitivity_val = SENSITIVITY * 2;
+
 int portsval = 0;
 
 // Prepare the next report for the host.
@@ -196,402 +197,343 @@ void GetNextReport(USB_JoystickReport_Input_t* const ReportData) {
 	// States and moves management
 	switch (state)
 	{
-		case CONNECT_CONTROLLER: // Nintendo Switchに接続後、少し待機させる
-			if (report_count > 100)
-			{
-				report_count = 0;
-				// コントローラーを認識させる動作へ移行する
-				state = SYNC_CONTROLLER;
-			}
-			else if (10 < report_count && report_count < 20)
-			{
-				// Aボタンを押し、Nintendo Switchに認識させる
-				ReportData->Button |= SWITCH_A;
-			}
-			report_count++;
+		
+		case SYNC_POSITION:
+			bufindex = 0;
+			
+			ReportData->Button = 0;
+			ReportData->LX = STICK_CENTER;
+			ReportData->LY = STICK_CENTER;
+			ReportData->RX = STICK_CENTER;
+			ReportData->RY = STICK_CENTER;
+			ReportData->HAT = HAT_CENTER;
+			
+			state = BREATHE;
 			break;
-		case SYNC_CONTROLLER: // コントローラーとしてNintendo Switchに認識させる
-			if (report_count > 100)
-			{
-				report_count = 0;
-				// メニューからオプションを開く動作に移行する
-				state = GO_TO_ALTERNA;
-			}
-			else if (20 < report_count && report_count < 30)
-			{
-				// LボタンおよびRボタンを同時押し
-				ReportData->Button |= SWITCH_L | SWITCH_R;
-			}
-			else if (50 < report_count && report_count < 60)
-			{
-				// Aボタンを押し、Nintendo Switchに認識させる
-				ReportData->Button |= SWITCH_A;
-			}
-			report_count++;
+		
+		case BREATHE:
+			state = PROCESS;
 			break;
-		case GO_TO_ALTERNA: // 広場からオルタナに移動する
-			if (report_count > 550)
-			{
-				report_count = 0;
-				state = OPEN_OPTION;
+		
+		case PROCESS:
+			
+			switch (step) {
+
+				case CONNECT_CONTROLLER:
+					tmp = ConnectController(bufindex);
+					break;
+				
+				case SYNC_CONTROLLER:
+					tmp = SyncController(bufindex);
+					break;
+				
+				case GO_TO_ALTERNA:
+					tmp = GoToAlterna(bufindex);
+					break;
+				
+				case OPEN_OPTION:
+					tmp = OpenOption(bufindex);
+
+					if (tmp.button == END) {
+						cnt++;
+					}
+
+					break;
+				
+				case TURN_OFF_GYRO:
+					if (GYRO_SETTING) {
+						tmp = TurnOffGyro(bufindex);
+					}
+					
+					break;
+				
+				case SET_SENSITIVITY:
+					flag = 0;
+					if (sensitivity_set != sensitivity_val) {
+						if (SENSITIVITY * 2 > sensitivity_set) {
+							mode = 1;
+							tmp = SetSensitivity(bufindex, mode); // 十字左連打
+						}
+						if (SENSITIVITY * 2 < sensitivity_set) {
+							mode = 0;
+							tmp = SetSensitivity(bufindex, mode); // 十字右連打
+						}
+						if (tmp.button == END && mode == 1) {
+							sensitivity_val--;
+						}
+						if (tmp.button == END && mode == 0) {
+							sensitivity_val++;
+						}
+					} else {
+						flag = 1;
+					}
+
+					break;
+				
+				case JUMP_TO_STAGE:
+					tmp = JumpToStage(bufindex);
+					break;
+
+				case ENTER_STAGE:
+					tmp = EnterStage(bufindex);
+					break;
+				
+				case CLEAR_STAGE:
+					tmp = ClearStage(bufindex);
+
+					if (tmp.button == END) {
+						clear_count++;
+					}
+
+					break;
+				
+				case LUNCH_DRONE:
+					tmp = LunchDrone(bufindex);
+					break;
+				
+				case RESET_SENSITIVITY:
+					flag = 0;
+					if (sensitivity_val != SENSITIVITY * 2) {
+						if (SENSITIVITY * 2 > sensitivity_set) {
+							mode = 0;
+							tmp = SetSensitivity(bufindex, mode); // 十字右連打
+						}
+						if (SENSITIVITY * 2 < sensitivity_set) {
+							mode = 1;
+							tmp = SetSensitivity(bufindex, mode); // 十字左連打
+						}
+						if (tmp.button == END && mode == 0) {
+							sensitivity_val++;
+						}
+						if (tmp.button == END && mode == 1) {
+							sensitivity_val--;
+						}
+					} else {
+						flag = 1;
+					}
+
+					break;
+				
+				case RESET_GYRO_SETTING:
+					if (GYRO_SETTING) {
+						tmp = ResetGyroSetting(bufindex);
+					}
+					
+					break;
+				
+				case BACK_TO_SPLATSVILLE:
+					tmp = BackToSplatsville(bufindex);
+
+					if (tmp.button == END) {
+						state = DONE;
+					}
+
+					break;
+				
 			}
-			else if (25 < report_count && report_count < 30)
-			{
-				// Xボタンでメニューを開く
-				ReportData->Button |= SWITCH_X;
+
+			switch (tmp.button) {
+				
+				case L_UP:
+					ReportData->LY = STICK_MIN;
+					break;
+				
+				case L_DOWN:
+					ReportData->LY = STICK_MAX;
+					break;
+				
+				case L_LEFT:
+					ReportData->LX = STICK_MIN;
+					break;
+				
+				case L_RIGHT:
+					ReportData->LX = STICK_MAX;
+					break;
+				
+				case R_UP:
+					if (!REVERSE_UD) {
+						ReportData->RY = STICK_MIN;
+					} else {
+						ReportData->RY = STICK_MAX;
+					}
+					break;
+				
+				case R_DOWN:
+					if (!REVERSE_UD) {
+						ReportData->RY = STICK_MAX;
+					} else {
+						ReportData->RY = STICK_MIN;
+					}
+					break;
+				
+				case R_LEFT:
+					if (!REVERSE_LR) {
+						ReportData->RX = STICK_MIN;
+					} else {
+						ReportData->RX = STICK_MAX;
+					}
+					break;
+				
+				case R_RIGHT:
+					if (!REVERSE_LR) {
+						ReportData->RX = STICK_MAX;
+					} else {
+						ReportData->RX = STICK_MIN;
+					}
+					break;
+				
+				case TOP:
+					ReportData->HAT = HAT_TOP;
+					break;
+				
+				case BOTTOM:
+					ReportData->HAT = HAT_BOTTOM;
+					break;
+				
+				case LEFT:
+					ReportData->HAT = HAT_LEFT;
+					break;
+				
+				case RIGHT:
+					ReportData->HAT = HAT_RIGHT;
+					break;
+				
+				case A:
+					ReportData->Button |= SWITCH_A;
+					break;
+				
+				case B:
+					ReportData->Button |= SWITCH_B;
+					break;
+				
+				case X:
+					ReportData->Button |= SWITCH_X;
+					break;
+				
+				case Y:
+					ReportData->Button |= SWITCH_Y;
+					break;
+				
+				case L:
+					ReportData->Button |= SWITCH_L;
+					break;
+				
+				case R:
+					ReportData->Button |= SWITCH_R;
+					break;
+				
+				case ZL:
+					ReportData->Button |= SWITCH_ZL;
+					break;
+				
+				case ZR:
+					ReportData->Button |= SWITCH_ZR;
+					break;
+				
+				case MINUS:
+					ReportData->Button |= SWITCH_MINUS;
+					break;
+				
+				case PLUS:
+					ReportData->Button |= SWITCH_PLUS;
+					break;
+				
+				case TRIGGERS:
+					ReportData->Button |= SWITCH_L | SWITCH_R;
+					break;
+				
+				case AIM_SHOT:
+					ReportData->Button |= SWITCH_ZR;
+					if (!REVERSE_UD) {
+						ReportData->RY = STICK_CENTER - 36;
+					} else {
+						ReportData->RY = STICK_CENTER + 36;
+					}
+					if (!REVERSE_LR) {
+						ReportData->RX = STICK_CENTER - 22;
+					} else {
+						ReportData->RX = STICK_CENTER + 22;
+					}					
+					break;
+
+				case AIM_MAP:
+					ReportData->LX = STICK_MIN;
+					ReportData->LY = 192;
+					break;
+				
+				case JUMP:
+					ReportData->Button |= SWITCH_B;
+					ReportData->LY = STICK_MIN;
+					break;
+
+				case END:
+					/* 
+					if (step == SYNC_CONTROLLER) {
+						bufindex = 0;
+						duration_count = 0;
+						step = ENTER_STAGE;
+					} // デバッグ用です。感度設定などを行わず、そのまま周回を始めます。
+					*/
+					
+					if (INFINITE_LOOP_MODE && step == CLEAR_STAGE) {
+						step = ENTER_STAGE;
+						bufindex = 0;
+						duration_count = 0;
+						clear_count = 0;
+					}					
+					else if (step == CLEAR_STAGE && (0 < clear_count && clear_count < 4)) {
+						step = ENTER_STAGE;
+						bufindex = 0;
+						duration_count = 0;
+					}
+					else if (step == LUNCH_DRONE) {
+						step = OPEN_OPTION;
+						bufindex = 0;
+						duration_count = 0;
+					}
+					else if (step == OPEN_OPTION && cnt == 2) {
+						step = RESET_SENSITIVITY;
+						bufindex = 0;
+						duration_count = 0;
+					}
+					else if (step == SET_SENSITIVITY && flag == 0) {
+						bufindex = 0;
+						duration_count = 0;
+					}
+					else if (step == RESET_SENSITIVITY && flag == 0) {
+						bufindex = 0;
+						duration_count = 0;
+					}
+					else {
+						if (SOFT_TYPE && (step == GO_TO_ALTERNA || step == ENTER_STAGE) && duration_count < tmp.duration) {
+							break;
+						} else {
+							step++;
+							bufindex = 0;
+							duration_count = 0;
+						}
+					}
+
+					break;
+				
+				default:
+					ReportData->LX = STICK_CENTER;
+					ReportData->LY = STICK_CENTER;
+					ReportData->RX = STICK_CENTER;
+					ReportData->RY = STICK_CENTER;
+					ReportData->HAT = HAT_CENTER;
+					break;
 			}
-			else if (40 < report_count && report_count < 45)
-			{
-				// 十字キー下でオルタナにカーソルを合わせる
-				ReportData->HAT = HAT_BOTTOM;
+
+			duration_count++;
+			
+			if (tmp.button != END && duration_count > tmp.duration) {
+				bufindex++;
+				duration_count = 0;
 			}
-			else if (50 < report_count && report_count < 55)
-			{
-				// Aボタンでオルタナに入る
-				ReportData->Button |= SWITCH_A;
-			}
-			report_count++;
+
 			break;
-		case OPEN_OPTION: // メニューからオプションを開く
-			if (report_count > 25)
-			{
-				report_count = 0;
-				state = TURN_OFF_GYRO;
-			}
-			else if (0 < report_count && report_count < 5)
-			{
-				// Xボタンでメニューを開く
-				ReportData->Button |= SWITCH_X;
-			}
-			else if (20 < report_count && report_count < 25)
-			{
-				// Lボタンでオプションに移動する
-				ReportData->Button |= SWITCH_L;
-			}
-			report_count++;
-			break;
-		case TURN_OFF_GYRO: // ジャイロ操作をOFFに設定する
-			if (report_count > 120)
-			{
-				report_count = 0;
-				state = SET_SENSITIVITY;
-			}
-			else if (10 < report_count && report_count < 20)
-			{
-				// Aボタンを押す
-				ReportData->Button |= SWITCH_A;
-			}
-			// これより下の(*)の箇所はジャイロ操作をOFFにする動作
-			// ジャイロ操作がもともとOFFの場合は上で設定を変更
-			else if (gyro_setting == 1 && 45 < report_count && report_count < 50)
-			{
-				// 十字上キーでジャイロ操作の欄に移動する(*)
-				ReportData->HAT = HAT_TOP;
-			}
-			else if (gyro_setting == 1 && 75 < report_count && report_count < 85)
-			{
-				// Aボタンでジャイロ操作をOFFにする(*)
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (gyro_setting == 1 && 95 < report_count && report_count < 100)
-			{
-				// 十字下キーで操作感度の欄に移動する(*)
-				ReportData->HAT = HAT_BOTTOM;
-			}
-			// ここまでジャイロ操作をOFFにする動作
-			report_count++;
-			break;
-		case SET_SENSITIVITY: // 操作感度を0にしてプログラム用に最適化
-			if (flag == 1)
-			{
-				report_count = 0;
-				sensitivity_count = 0;
-				state = JUMP_TO_STAGE;
-			}
-			else if (sensitivity < 0 && sensitivity_count != sensitivity && 10 * sensitivity_count < report_count && report_count < 10 * sensitivity_count + 5)
-			{
-				// 十字キー右を押す
-				ReportData->HAT = HAT_RIGHT;
-				sensitivity_count--;
-				timer = report_count;
-			}
-			else if (sensitivity > 0 && sensitivity_count != sensitivity && 10 * sensitivity_count < report_count && report_count < 10 * sensitivity_count + 5)
-			{
-				// 十字キー左を押す
-				ReportData->HAT = HAT_LEFT;
-				sensitivity_count++;
-				timer = report_count;
-			}
-			if (sensitivity == sensitivity_count && timer + 10 < report_count && report_count < timer + 15)
-			{
-				// Bボタンで操作感度の設定を終える
-				ReportData->Button |= SWITCH_B;
-				flag = 1;
-			}
-			report_count++;
-			break;
-		case JUMP_TO_STAGE: // ステージ1-8のヤカンへスーパージャンプで移動
-			if (report_count > 320)
-			{
-				report_count = 0;
-				state = ENTER_STAGE;
-			}
-			else if (0 < report_count && report_count < 10)
-			{
-				// Lボタンを押す(1)
-				ReportData->Button |= SWITCH_L;
-			}
-			else if (20 < report_count && report_count < 30)
-			{
-				// Lボタンを押す(2)
-				ReportData->Button |= SWITCH_L;
-			}
-			else if (50 < report_count && report_count < 55)
-			{
-				// Aボタンを押す
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (70 < report_count && report_count < 75)
-			{
-				// 十字キー上を押す(1)
-				ReportData->HAT = HAT_TOP;
-			}
-			else if (80 < report_count && report_count < 85)
-			{
-				// 十字キー上を押す(2)
-				ReportData->HAT = HAT_TOP;
-			}
-			else if (90 < report_count && report_count < 95)
-			{
-				// 十字キー上を押す(3)
-				ReportData->HAT = HAT_TOP;
-			}
-			else if (100 < report_count && report_count < 105)
-			{
-				// Aボタンを押す
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (110 < report_count && report_count < 115)
-			{
-				// Aボタンを押す
-				ReportData->Button |= SWITCH_A;
-			}
-			report_count++;
-			break;
-		case ENTER_STAGE: // ZLボタンを長押ししてヤカンに入る
-			if (report_count == 420)
-			{
-				report_count = 0;
-				state = CLEAR_STAGE;
-			}
-			else
-			{
-				// ZLボタンを押し続ける
-				ReportData->Button |= SWITCH_ZL;
-			}
-			report_count++;
-			break;
-		case CLEAR_STAGE: // ステージ1-8をクリアする
-			if (report_count > 1440 && clear_count > 3)
-			{
-				report_count = 0;
-				state = GET_ITEM;
-			}
-			else if (report_count > 1450)
-			{
-				report_count = 0;
-				clear_count++;
-				state = ENTER_STAGE;
-			}
-			else if (0 < report_count && report_count < 5)
-			{
-				// 十字キー右ボタンで4Kスコープにカーソルを合わせる
-				ReportData->HAT = HAT_RIGHT;
-			}
-			else if (15 < report_count && report_count < 20)
-			{
-				// Aボタンでブキを選択
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (20 < report_count && report_count < 105)
-			{
-				// Lスティックを上に倒し続ける
-				ReportData->LY = STICK_MIN;
-			}
-			else if (105 < report_count && report_count < 110)
-			{
-				// Aボタンでミッションを開始
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (230 < report_count && report_count < 320)
-			{
-				// ZRボタン長押しでフルチャージ
-				ReportData->Button |= SWITCH_ZR;
-			}
-			if (270 < report_count && report_count < 275)
-			{
-				// 視点を上にずらす
-				ReportData->RY = 48;
-			}
-			if (290 < report_count && report_count < 295)
-			{
-				// 視点を左にずらす
-				ReportData->RX = 88;
-			}
-			if (50 < report_count && report_count < 55)
-			{
-				// Aボタンでブキを選択
-				ReportData->Button |= SWITCH_Y;
-			}
-			report_count++;
-			break;
-		case GET_ITEM: // ドローンを起動してアイテムを探してきてもらう
-			if (report_count > 700)
-			{
-				report_count = 0;
-				state = RESET_SENSITIVITY;
-			}
-			else if (0 < report_count && report_count < 10 )
-			{
-				ReportData->Button |= SWITCH_X;
-			}
-			else if (20 < report_count && report_count < 40)
-			{
-				// シオカラキャンプに照準を合わせる
-				ReportData->LX = STICK_MIN;
-				ReportData->LY = 192;
-			}
-			else if (50 < report_count && report_count < 55)
-			{
-				// Aボタンでシオカラキャンプを選択
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (70 < report_count && report_count < 75)
-			{
-				// Aボタンでシオカラキャンプにジャンプ
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (240 < report_count && report_count < 260)
-			{
-				// Rスティックを左に倒してドローンの方向に視点を向ける
-				ReportData->RX = 24;
-			}
-			else if (260 < report_count && report_count < 455)
-			{
-				// Lスティックを上に倒しこんでドローンに移動
-				ReportData->LY = STICK_MIN;
-			}
-			else if (455 < report_count && report_count < 460)
-			{
-				// Aボタンでドローンを起動
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (630 < report_count && report_count < 635)
-			{
-				// 十字キー上でカーソルを合わせる
-				ReportData->HAT = HAT_TOP;
-			}
-			else if (640 < report_count && report_count < 645)
-			{
-				// Aボタンでドローンを起動
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (660 < report_count && report_count < 665)
-			{
-				// マイナスボタンでスキップ
-				ReportData->Button |= SWITCH_MINUS;
-			}
-			if (365 < report_count && report_count < 385)
-			{
-				// ドローンまでの道のりの段差を飛び越える
-				ReportData->Button |= SWITCH_B;
-			}
-			report_count++;
-			break;
-		case RESET_SENSITIVITY: // オプション画面で操作設定を元の状態に戻す
-			if (sensitivity == -10 && report_count > 130 || sensitivity == 10 && report_count > 130 || sensitivity_count == sensitivity)
-			{
-				report_count = 0;
-				state = RESET_GYRO_SETTING;
-			}
-			else if (0 < report_count && report_count < 5 )
-			{
-				// Xボタンでメニューを開く
-				ReportData->Button |= SWITCH_X;
-			}
-			else if (15 < report_count && report_count < 20)
-			{
-				// Lボタンでオプション画面に移動
-				ReportData->Button |= SWITCH_L;
-			}
-			else if (30 < report_count && report_count < 35)
-			{
-				// Aボタンで操作感度の設定に入る
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (sensitivity == -10 && 45 < report_count && report_count < 125)
-			{
-				ReportData->LX = STICK_MIN;
-			}
-			else if (sensitivity == 10 && 45 < report_count && report_count < 125)
-			{
-				ReportData->LX = STICK_MAX;
-			}
-			else if (sensitivity < 0 && sensitivity_count != sensitivity && 10 * sensitivity_count + 45 < report_count && report_count < 10 * sensitivity_count + 50)
-			{
-				// 十字キー左を押す
-				ReportData->HAT = HAT_LEFT;
-				sensitivity_count--;
-			}
-			else if (sensitivity > 0 && sensitivity_count != sensitivity && 10 * sensitivity_count + 45 < report_count && report_count < 10 * sensitivity_count + 50)
-			{
-				// 十字キー右を押す
-				ReportData->HAT = HAT_RIGHT;
-				sensitivity_count++;
-			}
-			report_count++;
-			break;
-		case RESET_GYRO_SETTING: // ジャイロ操作の設定を元の状態に戻す
-			if (report_count > 50)
-			{
-				report_count = 0;
-				state = BACK_TO_SPLATSVILLE;
-			}
-			else if (10 < report_count && report_count < 15 )
-			{
-				// 十字キー上でジャイロ操作の設定に移る
-				ReportData->HAT = HAT_TOP;
-			}
-			else if (20 < report_count && report_count < 25)
-			{
-				// Aボタンでジャイロ操作をONに戻す
-				ReportData->Button |= SWITCH_A;
-			}
-			else if (30 < report_count && report_count < 35)
-			{
-				// Bボタンで操作感度の設定を終える
-				ReportData->Button |= SWITCH_B;
-			}
-			report_count++;
-			break;
-		case BACK_TO_SPLATSVILLE: // ジャイロ操作の設定を元の状態に戻す
-			if (report_count > 100)
-			{
-				report_count = 0;
-				state = DONE;
-			}
-			else if (0 < report_count && report_count < 5 )
-			{
-				// プラスボタンでバンカラ街へ戻る
-				ReportData->Button |= SWITCH_PLUS;
-			}
-			else if (15 < report_count && report_count < 20)
-			{
-				// Aボタンで決定
-				ReportData->Button |= SWITCH_A;
-			}
-			report_count++;
-			break;
+
 		case DONE:
 			#ifdef ALERT_WHEN_DONE
 			portsval = ~portsval;
@@ -601,6 +543,7 @@ void GetNextReport(USB_JoystickReport_Input_t* const ReportData) {
 			#endif
 			return;
 	}
+
 
 	// Prepare to echo this report
 	memcpy(&last_report, ReportData, sizeof(USB_JoystickReport_Input_t));
