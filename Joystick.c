@@ -472,7 +472,9 @@ void GetNextReport(USB_JoystickReport_Input_t* const ReportData) {
 						bufindex = 0;
 						duration_count = 0;
 						step = ENTER_STAGE;
-					} // デバッグ用です。感度設定などを行わず、そのまま周回を始めます。
+					}
+					// デバッグ用です。
+					// 1-8ヤカン上でマイコンを接続すると、感度設定などをスキップして周回を始めます。
 					*/
 					
 					if (INFINITE_LOOP_MODE && step == CLEAR_STAGE) {
