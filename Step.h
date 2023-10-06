@@ -1,6 +1,7 @@
 /* Header file for Step.c */
 
 #include <stdint.h>
+
 /* ボタンの記述について Buttons_t で定義 */
 typedef enum {
 	L_UP,
@@ -39,6 +40,7 @@ typedef struct {
 	uint16_t duration; // 時間的な間隔をフレーム単位で示す変数 duration の定義
 } command; // これを新たに command 型として定義
 
+/* Step.c 内の関数について定義 */
 command ConnectController(int index);
 command SyncController(int index);
 command GoToAlterna(int index);

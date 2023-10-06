@@ -188,13 +188,13 @@ command LunchDrone(int index) {
 		{ L_UP,     105 }, // [61]
 		{ JUMP,		 20 },
 		{ L_UP,		 75 },
-	//	{ A,          5 }, // [62]
+		{ A,          5 }, // [62]
 		{ NOTHING,  180 }, // [63]
 		{ TOP,        5 }, // [64]
 		{ NOTHING,   10 }, // [65]
-	//	{ A,          5 }, // [66]
+		{ A,          5 }, // [66]
 		{ NOTHING,   15 }, // [67]
-	//	{ MINUS,      5 }, // [68]
+		{ MINUS,      5 }, // [68]
 		{ NOTHING,   90 }, // [69]
 		{ END,		  0 }
 	};
