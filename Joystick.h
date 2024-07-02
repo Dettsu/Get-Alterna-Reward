@@ -51,6 +51,8 @@
 #include <LUFA/Platform/Platform.h>
 
 #include "Descriptors.h"
+#include "Config.h"
+#include "Step.h"
 
 // Type Defines
 // Enumeration for joystick buttons.
